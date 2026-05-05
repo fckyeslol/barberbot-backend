@@ -5,8 +5,8 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Modelo definido en CLAUDE.md
-const MODEL = 'claude-sonnet-4-20250514';
+// Modelo actualizado — claude-sonnet-4-6 es el Sonnet más reciente
+const MODEL = 'claude-sonnet-4-6';
 
 // Intenciones detectables
 export const INTENCIONES = {
