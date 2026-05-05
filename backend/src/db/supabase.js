@@ -2,11 +2,23 @@
 // BarberBot SaaS — Cliente Supabase y Queries Multi-Tenant
 // ============================================================
 import { createClient } from '@supabase/supabase-js';
+import { createRequire } from 'module';
+
+// Node 18 no tiene WebSocket nativo — usamos el paquete 'ws' como polyfill.
+// En Node 20+ esto no es necesario pero no causa daño.
+const require = createRequire(import.meta.url);
+let ws;
+try {
+  ws = require('ws');
+} catch {
+  ws = undefined; // Node 20+ tiene WebSocket nativo, no necesita el paquete
+}
 
 // --- Cliente Supabase (singleton) ---
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // service role para operaciones del backend
+  process.env.SUPABASE_SERVICE_ROLE_KEY, // service role para operaciones del backend
+  ws ? { realtime: { transport: ws } } : {}
 );
 
 export default supabase;
