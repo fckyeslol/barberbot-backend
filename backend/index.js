@@ -8,9 +8,13 @@ import webhookRouter from './src/routes/webhook.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- Middlewares globales ---
+// --- Middleware de logging global (primero de todo) ---
+app.use((req, _res, next) => {
+  console.log(`[HTTP] ${req.method} ${req.path} | Content-Type: ${req.headers['content-type'] || 'none'}`);
+  next();
+});
+
 // Bypass de la pantalla de advertencia de ngrok en desarrollo
-// (ngrok muestra una página HTML de advertencia que bloquea los requests de Meta)
 app.use((_req, res, next) => {
   res.setHeader('ngrok-skip-browser-warning', 'true');
   next();
