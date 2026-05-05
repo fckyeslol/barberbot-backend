@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import express from 'express';
 import webhookRouter from './src/routes/webhook.js';
+import webhookTwilioRouter from './src/routes/webhook-twilio.js';
 import authRouter from './src/routes/auth.js';
 import { initCronJobs } from './src/services/cron.js';
 
@@ -33,6 +34,7 @@ app.use(
 
 // --- Rutas ---
 app.use('/webhook', webhookRouter);
+app.use('/webhook/twilio', webhookTwilioRouter);
 app.use('/auth', authRouter);
 
 // Ruta de salud — útil para Railway y monitoreo

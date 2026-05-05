@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "googleapis": "^140.0.0",
     "node-cron": "^3.0.3",
+    "twilio": "^6.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
