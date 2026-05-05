@@ -4,6 +4,8 @@
 import 'dotenv/config';
 import express from 'express';
 import webhookRouter from './src/routes/webhook.js';
+import authRouter from './src/routes/auth.js';
+import { initCronJobs } from './src/services/cron.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +33,7 @@ app.use(
 
 // --- Rutas ---
 app.use('/webhook', webhookRouter);
+app.use('/auth', authRouter);
 
 // Ruta de salud — útil para Railway y monitoreo
 app.get('/health', (_req, res) => {
@@ -52,6 +55,9 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`✂️  BarberBot backend corriendo en puerto ${PORT}`);
   console.log(`📡 Webhook disponible en http://localhost:${PORT}/webhook`);
+
+  // Iniciamos los cron jobs de recordatorios y automatizaciones
+  initCronJobs();
 });
 
 export default app;
