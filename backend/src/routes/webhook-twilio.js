@@ -5,8 +5,7 @@
 import { Router } from 'express';
 import twilio from 'twilio';
 import { processConversation, extractAppointmentData, INTENCIONES } from '../services/ai.js';
-import {
-  getBarbershopByPhoneId,
+import supabase, {
   getOrCreateClient,
   getConversationHistory,
   saveConversationHistory,
@@ -61,7 +60,7 @@ const processTwilioMessage = async (body) => {
   console.log(`[Twilio] Mensaje de ${clientPhone}: "${messageText}"`);
 
   // Usamos la barbería demo — en producción se mapea por número Twilio
-  const { data: barbershop } = await (await import('../db/supabase.js')).default
+  const { data: barbershop } = await supabase
     .from('barbershops')
     .select('*')
     .eq('whatsapp_phone_id', process.env.DEMO_BARBERSHOP_PHONE_ID || '1161803967005242')

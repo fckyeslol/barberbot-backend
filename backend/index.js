@@ -32,6 +32,9 @@ app.use(
   })
 );
 
+// Twilio envía los datos como form-urlencoded (no JSON)
+app.use(express.urlencoded({ extended: false }));
+
 // --- Rutas ---
 app.use('/webhook', webhookRouter);
 app.use('/webhook/twilio', webhookTwilioRouter);
