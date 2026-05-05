@@ -10,7 +10,7 @@ import {
   sendMessage,
   markMessageAsRead,
 } from '../services/whatsapp.js';
-import { processConversation, INTENCIONES } from '../services/ai.js';
+import { processConversation, extractAppointmentData, INTENCIONES } from '../services/ai.js';
 import { getAvailableSlots, createAppointment } from '../services/calendar.js';
 import {
   getBarbershopByPhoneId,
@@ -139,64 +139,110 @@ const processWebhookMessage = async (body) => {
 // ============================================================
 
 /**
- * Intenta extraer y guardar una cita cuando Claude detecta intención RESERVA.
- * Solo actúa si puede extraer servicio + barbero + fecha/hora confirmados.
- * @param {Array} history - historial completo de la conversación
- * @param {Object} barbershop - datos de la barbería
- * @param {Array} barbers - lista de barberos
+ * Palabras clave que indican que el cliente confirmó la cita.
+ * Claude incluye estas en su respuesta cuando ya tiene todos los datos.
+ */
+const CONFIRMATION_KEYWORDS = [
+  'confirmado', 'agendado', 'reservado', 'quedó agendad',
+  'te esperamos', 'está listo', 'cita confirmada',
+];
+
+/**
+ * Extrae, valida y guarda una cita cuando Claude confirmó todos los datos.
+ * Solo actúa tras detección de palabras clave de confirmación en la respuesta del bot.
+ * @param {Array} history - historial completo incluyendo la respuesta de confirmación
+ * @param {Object} barbershop - datos de la barbería (tenant)
+ * @param {Array} barbers - lista de barberos del tenant
  * @param {Object} client - datos del cliente
  * @param {string} phoneNumberId - Phone Number ID del tenant
  * @param {string} clientPhone - teléfono del cliente
  */
 const handleReservationFlow = async (history, barbershop, barbers, client, phoneNumberId, clientPhone) => {
   try {
-    // Buscamos en el historial si el último mensaje del asistente confirma los datos
-    const lastAssistantMessage = [...history]
+    // 1. Verificamos que el último mensaje del bot contiene una confirmación
+    const lastBotMessage = [...history]
       .reverse()
-      .find((m) => m.role === 'assistant')?.content || '';
+      .find((m) => m.role === 'assistant')?.content?.toLowerCase() || '';
 
-    // Palabras clave que indican confirmación explícita de la cita
-    const confirmationKeywords = ['confirmado', 'agendado', 'reservado', 'listo', 'perfecto, te espero'];
-    const isConfirmed = confirmationKeywords.some((kw) =>
-      lastAssistantMessage.toLowerCase().includes(kw)
+    const isConfirmed = CONFIRMATION_KEYWORDS.some((kw) => lastBotMessage.includes(kw));
+    if (!isConfirmed) return; // Bot todavía recopilando datos
+
+    console.log(`[Reserva] Confirmación detectada para ${clientPhone} — extrayendo datos...`);
+
+    // 2. Segunda llamada a Claude para extraer datos estructurados
+    const timezone = barbershop.settings?.timezone || 'America/Bogota';
+    const appointmentData = await extractAppointmentData(history, barbers, timezone);
+
+    if (!appointmentData?.isComplete) {
+      console.warn('[Reserva] Datos incompletos:', appointmentData?.missingFields);
+      return;
+    }
+
+    // 3. Buscamos el barbero por nombre en la lista del tenant
+    const barber = barbers.find(
+      (b) => b.id === appointmentData.barberId ||
+             b.name.toLowerCase() === appointmentData.barberName?.toLowerCase()
     );
 
-    if (!isConfirmed) return; // Claude sigue recopilando datos, no guardamos aún
+    if (!barber) {
+      console.warn(`[Reserva] Barbero no encontrado: ${appointmentData.barberName}`);
+      return;
+    }
 
-    // TODO: implementar extracción estructurada de datos de la cita desde el historial
-    // usando una llamada adicional a Claude con output estructurado (JSON).
-    // Por ahora registramos en logs que se detectó una confirmación.
-    console.log(`[Webhook] Confirmación de reserva detectada para cliente ${clientPhone} en ${barbershop.name}`);
+    // 4. Verificamos que la cita no exista ya (evitar duplicados por doble procesamiento)
+    const appointmentDatetime = new Date(appointmentData.datetime);
+    if (isNaN(appointmentDatetime.getTime())) {
+      console.warn('[Reserva] Datetime inválido:', appointmentData.datetime);
+      return;
+    }
 
-    // Ejemplo de estructura para saveAppointment (se completa con extracción real):
-    /*
-    const appointmentData = await extractAppointmentData(history, barbers);
-    if (!appointmentData) return;
+    // 5. Creamos el evento en Google Calendar (si está configurado)
+    let googleEventId = null;
+    if (barbershop.google_tokens) {
+      googleEventId = await createAppointment(barbershop, barber, {
+        clientName: client.name || clientPhone,
+        clientPhone,
+        service: appointmentData.service,
+        datetime: appointmentData.datetime,
+        durationMin: 30,
+      });
+    }
 
-    const googleEventId = await createAppointment(barbershop, appointmentData.barber, {
-      clientName: client.name,
-      clientPhone: client.phone,
-      service: appointmentData.service,
-      datetime: appointmentData.datetime,
-      durationMin: 30,
-    });
-
-    await saveAppointment({
+    // 6. Guardamos la cita en Supabase
+    const savedAppointment = await saveAppointment({
       barbershop_id: barbershop.id,
       client_id: client.id,
-      barber_id: appointmentData.barber.id,
+      barber_id: barber.id,
       service: appointmentData.service,
-      datetime: appointmentData.datetime,
+      datetime: appointmentDatetime.toISOString(),
       status: 'confirmed',
       google_event_id: googleEventId,
     });
 
-    await sendMessage(phoneNumberId, clientPhone,
-      `✅ Cita confirmada: ${appointmentData.service} con ${appointmentData.barber.name} el ${appointmentData.datetimeFormatted}`
+    console.log(`[Reserva] ✅ Cita guardada: ${savedAppointment.id} | ${appointmentData.service} con ${barber.name} el ${appointmentData.datetime}`);
+
+    // 7. Formateamos la fecha para el mensaje de confirmación
+    const fechaFormateada = appointmentDatetime.toLocaleString('es-CO', {
+      timeZone: timezone,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // 8. Enviamos confirmación final con los detalles de la cita
+    await sendMessage(
+      phoneNumberId,
+      clientPhone,
+      `✅ Cita confirmada: ${appointmentData.service} con ${barber.name} el ${fechaFormateada}. ¡Te esperamos!`
     );
-    */
+
+    // 9. Limpiamos el historial de conversación para la próxima interacción
+    await saveConversationHistory(barbershop.id, clientPhone, []);
+
   } catch (err) {
-    console.error('[Webhook] Error en flujo de reserva:', err.message);
+    console.error('[Reserva] Error en flujo de reserva:', err.message);
   }
 };
 

@@ -127,6 +127,74 @@ export const processConversation = async (conversationHistory, newMessage, barbe
 };
 
 // ============================================================
+// EXTRACCIÓN ESTRUCTURADA DE DATOS DE CITA
+// ============================================================
+
+/**
+ * Segunda llamada a Claude para extraer los datos de la cita como JSON.
+ * Solo se llama cuando el bot ya confirmó todos los datos con el cliente.
+ * @param {Array} conversationHistory - historial completo incluyendo la confirmación
+ * @param {Array} barbers - lista de barberos del tenant
+ * @param {string} timezone - zona horaria de la barbería (ej. 'America/Bogota')
+ * @returns {Object|null} - { service, barberName, barberId, date, time, datetime } o null
+ */
+export const extractAppointmentData = async (conversationHistory, barbers, timezone = 'America/Bogota') => {
+  try {
+    const now = new Date().toLocaleString('es-CO', { timeZone: timezone });
+    const barberosJson = JSON.stringify(barbers.map((b) => ({ id: b.id, name: b.name })));
+
+    const extractionPrompt = `Analiza esta conversación de WhatsApp entre un cliente y un bot de barbería.
+Extrae los datos de la cita que el cliente confirmó.
+
+Fecha y hora actual: ${now}
+Barberos disponibles: ${barberosJson}
+
+Conversación:
+${conversationHistory.map((m) => `${m.role === 'user' ? 'Cliente' : 'Bot'}: ${m.content}`).join('\n')}
+
+Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta (sin markdown, sin texto extra):
+{
+  "isComplete": true/false,
+  "service": "nombre del servicio o null",
+  "barberName": "nombre del barbero o null",
+  "barberId": "uuid del barbero o null",
+  "date": "YYYY-MM-DD o null",
+  "time": "HH:MM o null",
+  "datetime": "YYYY-MM-DDTHH:MM:00 o null",
+  "missingFields": ["campo1", "campo2"]
+}
+
+Reglas:
+- isComplete es true solo si tienes servicio + barbero + fecha + hora confirmados por el cliente
+- Resuelve fechas relativas como "mañana", "el lunes", "pasado mañana" usando la fecha actual
+- Si el cliente dijo "cualquier barbero" o similar, elige el primero disponible
+- Si falta algún dato, ponlo como null y agrégalo a missingFields`;
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 300,
+      messages: [{ role: 'user', content: extractionPrompt }],
+    });
+
+    const rawText = response.content[0]?.text?.trim() || '';
+
+    // Extraemos el JSON de la respuesta
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn('[AI] extractAppointmentData: no se encontró JSON en la respuesta');
+      return null;
+    }
+
+    const data = JSON.parse(jsonMatch[0]);
+    console.log(`[AI] Extracción de cita: isComplete=${data.isComplete} | ${data.service} con ${data.barberName} el ${data.datetime}`);
+    return data;
+  } catch (err) {
+    console.error('[AI] Error al extraer datos de cita:', err.message);
+    return null;
+  }
+};
+
+// ============================================================
 // DETECCIÓN RÁPIDA DE INTENCIÓN (sin historial, para cron jobs)
 // ============================================================
 
